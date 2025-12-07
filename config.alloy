@@ -1,0 +1,253 @@
+// =====================
+// Clavister Firewall Log Processing via Alloy + Loki
+// =====================
+
+local.file_match "fw" {
+  path_targets = [{
+    __address__ = "localhost",
+    __path__    = "/var/log/FW/*/*.log",
+    job         = "clavister-firewall",
+  }]
+}
+
+discovery.relabel "fw" {
+  targets = local.file_match.fw.targets
+
+  // Derive ip from folder name
+  rule {
+    source_labels = ["__path__"]
+    regex         = ".*/FW/([^/]+)/[^/]+\\.log$"
+    target_label  = "ip"
+    replacement   = "$1"
+  }
+
+  // Map job to IP (so every firewall becomes its own job)
+  rule {
+    source_labels = ["ip"]
+    target_label  = "job"
+    replacement   = "$1"
+  }
+
+  // -------- Reduce label cardinality (safe to drop) --------
+  rule { 
+   action = "labeldrop"
+   regex = "service_name" 
+  }
+  rule { 
+   action = "labeldrop" 
+   regex = "pkt_srcip|pkt_destip|pkt_srcport|pkt_destport" 
+  }
+  rule { 
+   action = "labeldrop" 
+   regex = "flowfwd_srcip|flowfwd_destip|flowfwd_srcport|flowfwd_destport" 
+  }
+  rule { 
+   action = "labeldrop" 
+   regex = "src|dest|srcport|destport|srchw|pkt_srchw|logtrace|localip|remoteip" 
+  }
+
+} 
+
+loki.process "fw" {
+  forward_to = [loki.write.default.receiver]
+
+  // Drop empty timestamp-only lines
+  stage.drop {
+    expression = "^[0-9]{4}-[0-9]{2}-[0-9]{2}\\s+[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.\\d+)?$"
+  }
+
+  // Parse header: timestamp, device mgmt IP, category, key=value section
+  stage.regex {
+    expression = "^(?P<ts>[^ ]+)\\s+(?P<device>[^ ]+)\\s+(?P<category>[^:]+):\\s*(?P<kv>.*)$"
+  }
+
+  stage.timestamp {
+    source = "ts"
+    format = "2006-01-02 15:04:05.000000000"
+    fallback_formats = ["2006-01-02 15:04:05"]
+    location = "Europe/Stockholm"
+  }
+
+  // Low-cardinality label
+  stage.labels {
+    values = { category = null }
+  }
+
+  // ------------------------------
+  // Common extractions
+  // ------------------------------
+
+  // ---- Keep these global & cheap ----
+  stage.regex { expression = "(?:^|\\s)prio=(?P<detected_level>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)id=(?P<id>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)event=(?P<event>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)action=(?P<action>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)rule=(?P<rule>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)app(?:_new)?=(?P<app>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)app_risk=\"?(?P<app_risk>[^\"]+)\"?" }
+
+  // ---- FLOW-only fields ----
+  stage.match {
+    selector = "{category=~\"(?i)flow|traffic|session\"}"
+    stage.regex { expression = "(?:^|\\s)flow_proto=(?P<flow_proto>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)flowfwd_recvif=(?P<flowfwd_recvif>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)flowfwd_srcip=(?P<flowfwd_srcip>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)flowfwd_srcport=(?P<flowfwd_srcport>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)flowfwd_destip=(?P<flowfwd_destip>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)flowfwd_destport=(?P<flowfwd_destport>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)flowrev_recvif=(?P<flowrev_recvif>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)flowrev_srcip=(?P<flowrev_srcip>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)flowrev_srcport=(?P<flowrev_srcport>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)flowrev_destip=(?P<flowrev_destip>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)flowrev_destport=(?P<flowrev_destport>\\S+)" }
+
+    // unified "network" labels, scoped to FLOW
+    stage.regex { expression = "(?:^|\\s)(?:flowfwd_srcip|srcip)=(?P<src>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)(?:flowfwd_destip|destip)=(?P<dest>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)(?:flowfwd_srcport)=(?P<srcport>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)(?:flowfwd_destport)=(?P<destport>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)(?:flow_proto|proto)=(?P<proto>\\S+)" }
+  }
+
+  // ---- PKTLOG / firewall packet fields ----
+  stage.match {
+    selector = "{category=~\"(?i)pkt|firewall|drop|allow\"}"
+    stage.regex { expression = "(?:^|\\s)pkt_proto=(?P<pkt_proto>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)pkt_srcip=(?P<pkt_srcip>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)pkt_destip=(?P<pkt_destip>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)pkt_srcport=(?P<pkt_srcport>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)pkt_destport=(?P<pkt_destport>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)pkt_tcpflags=(?P<pkt_tcpflags>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)vlanid=(?P<vlanid>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)vlantype=(?P<vlantype>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)iface=(?P<iface>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)(?:recviface|pkt_recvif)=(?P<recviface>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)(?:srchw|pkt_srchw)=(?P<srchw>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)pkt_ipver=(?P<pkt_ipver>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)pkt_enetproto=(?P<pkt_enetproto>\\S+)" }
+
+    // unified network labels, scoped to PKT
+    stage.regex { expression = "(?:^|\\s)(?:pkt_srcip|srcip)=(?P<src>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)(?:pkt_destip|destip)=(?P<dest>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)(?:pkt_srcport)=(?P<srcport>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)(?:pkt_destport)=(?P<destport>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)(?:pkt_proto|proto)=(?P<proto>\\S+)" }
+  }
+
+  // ---- IPsec / IKE only ----
+  stage.match {
+    selector = "{category=~\"(?i)ipsec|ike\"}"
+    stage.regex { expression = "(?:^|\\s)localip=(?P<ipsec_localip>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)remoteip=(?P<ipsec_remoteip>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)inboundspi=(?P<inboundspi>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)outboundspi=(?P<outboundspi>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)localikespi=(?P<localikespi>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)remoteikespi=(?P<remoteikespi>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)proto=(?P<proto>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)algorithms=(?P<algorithms>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)initiator=(?P<initiator>\\S+)" }
+  }
+
+  // ---- DHCP / ARP odds and ends ----
+  stage.match {
+    selector = "{category=~\"(?i)dhcp|arp\"}"
+    stage.regex { expression = "(?:^|\\s)clientip=(?P<clientip>\\S+)" }
+    stage.regex { expression = "(?:^|\\s)localip=(?P<localip>\\S+)" }  // avoid conflict with label "ip"
+    stage.regex { expression = "(?:^|\\s)ip=(?P<arp_ip>\\S+)" }
+  }
+
+  // ---- Zones / user / rule meta (moderate cost, still useful) ----
+  stage.regex { expression = "(?:^|\\s)zone=(?P<zone>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)recvzone=(?P<recvzone>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)pkt_recvzone=(?P<pkt_recvzone>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)ruletype=(?P<ruletype>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)ruleorigin=(?P<ruleorigin>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)user=(?P<user>\\S+)" }
+  stage.regex { expression = "(?:^|\\s)userid=(?P<userid>\\S+)" }
+
+  // Keep only low-cardinality labels
+  stage.labels {
+    values = {
+      job            = null,     // from relabel
+      ip             = null,     // folder-derived
+      category       = null,
+      detected_level = null,
+      severity       = null,     // your mapped label
+      event          = null,
+      action         = null,
+      rule           = null,
+      proto          = null,     // unified from flow_proto/pkt_proto
+      app            = null,
+      app_risk       = null,
+      initiator      = null,
+      algorithms     = null,
+      ipsec_remoteip = null,
+    }
+  }
+
+  // ------------------------------
+  // Severity Mapping
+  // ------------------------------
+
+  // Defaults (used unless a match overrides them)
+  stage.labels { values = { severity = "info", severity_num = "6" } }
+
+  stage.match {
+    selector = "{detected_level=~\"(?i)emerg|alert|crit(ical)?\"}"
+    stage.labels { values = { severity = "critical", severity_num = "2" } }
+  }
+  stage.match {
+    selector = "{detected_level=~\"(?i)err(or)?\"}"
+    stage.labels { values = { severity = "error", severity_num = "3" } }
+  }
+  stage.match {
+    selector = "{detected_level=~\"(?i)warn(ing)?\"}"
+    stage.labels { values = { severity = "warn", severity_num = "4" } }
+  }
+  stage.match {
+    selector = "{detected_level=~\"(?i)notice\"}"
+    stage.labels { values = { severity = "notice", severity_num = "5" } }
+  }
+  stage.match {
+    selector = "{detected_level=~\"(?i)info\"}"
+    stage.labels { values = { severity = "info", severity_num = "6" } }
+  }
+  stage.match {
+    selector = "{detected_level=~\"(?i)debug\"}"
+    stage.labels { values = { severity = "debug", severity_num = "7" } }
+  }
+}
+
+loki.source.file "fw" {
+  targets               = discovery.relabel.fw.output
+  forward_to            = [loki.process.fw.receiver]
+  legacy_positions_file = "/var/lib/alloy/positions/positions.yaml"
+}
+
+// --- discover files via glob, and attach labels here ---
+local.file_match "manual" {
+  path_targets = [{
+    __path__ = "/var/log/manual/*.log",
+    job      = "manual_upload",   // label
+    source   = "local_import",    // label
+  }]
+}
+
+// --- actually tail the files discovered above ---
+loki.source.file "manual" {
+  targets    = local.file_match.manual.targets
+  forward_to = [loki.process.fw.receiver]              // or use loki.write.default.receiver to bypass parser
+
+// optional: poll the directory frequently for new files
+  file_watch {
+    min_poll_frequency = "250ms"
+    max_poll_frequency = "2s"
+  } 
+
+  legacy_positions_file = "/var/lib/alloy/positions/manual.yaml"
+}
+
+loki.write "default" {
+  endpoint { url = "http://localhost:3100/loki/api/v1/push" }
+  external_labels = {}
+}

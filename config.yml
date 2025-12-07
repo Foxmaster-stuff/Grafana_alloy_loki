@@ -1,0 +1,104 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9095
+  log_level: warn
+  grpc_server_max_concurrent_streams: 1000
+  grpc_server_max_recv_msg_size: 104857600
+  grpc_server_max_send_msg_size: 104857600
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /var/lib/loki                         # was /tmp/loki
+  storage:
+    filesystem:
+      chunks_directory: /var/lib/loki/chunks         # was /tmp/loki/chunks
+      rules_directory:  /var/lib/loki/rules          # was /tmp/loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+query_range:
+  cache_results: true
+  parallelise_shardable_queries: true
+  align_queries_with_step: true
+    #  parallelise_shardable_queries: true
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 256                               # was 100
+
+frontend:
+  encoding: protobuf
+  max_outstanding_per_tenant: 4096
+
+frontend_worker:
+  frontend_address: 127.0.0.1:9095
+
+# Optional: if you don't actively use Pattern/LogReduce, disable it to save CPU/mem
+pattern_ingester:
+  enabled: false
+  metric_aggregation:
+    loki_address: localhost:3100
+
+ruler:
+  alertmanager_url: http://localhost:9093
+
+# Keep limits conservative; raise gradually if needed
+limits_config:
+  allow_structured_metadata: true
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  retention_period: 168h
+
+  # Ingestion safety
+  max_line_size: 256000                  # important for long Clavister lines
+  ingestion_rate_mb: 64                   # was 10000 (!)
+  ingestion_burst_size_mb: 128            # was 1000
+  per_stream_rate_limit: 16MB            # was 512M; value accepts size suffixes
+  per_stream_rate_limit_burst: 32MB      # was 1024M
+
+  # Label/cardinality safety
+  max_label_names_per_series: 40         # was 300
+  max_label_value_length: 2048           # was 20480
+  max_label_name_length: 512             # was 10240
+  cardinality_limit: 0                   # rely on label hygiene instead of hard cap
+
+  # Query caps
+  max_query_parallelism: 64               # was 2
+  max_entries_limit_per_query: 200000    # was 1000000
+  max_query_series: 200000               # was 1000000
+  split_queries_by_interval: 10m
+  query_timeout: 3m
+  max_queriers_per_tenant: 2
+
+querier:
+  max_concurrent: 64
+
+  # Optional advanced caps; comment out unless needed:
+  # max_chunks_per_query: 200000
+  # max_query_length: 672h
+
+compactor:
+  working_directory: /var/lib/loki/retention   # was /tmp/loki/retention
+  compaction_interval: 1h
+  retention_enabled: true
+  retention_delete_delay: 12h
+  delete_request_store: filesystem
+
+analytics:
+  reporting_enabled: false
+
