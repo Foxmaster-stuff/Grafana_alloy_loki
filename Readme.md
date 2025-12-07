@@ -48,7 +48,10 @@ code blocks for commands
 
 ## Help
 
-Any advise for common problems or issues.
+* Additional cleanup, logfiles grows fast and a daily cleanup is recommended,g for this we will use logrotate and some small script.
+    * Download the following script and place it in /usr/local/bin/del_0b_files.sh (this will clean up 0 byte files and delete files older than 2 days)
+* Create a logrotate config to compress the logfiles
+    * Place this file in /etc/logrotate.d/remote_FW
 ```
 command to run if program contains helper info
 ```
