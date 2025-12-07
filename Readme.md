@@ -13,6 +13,7 @@ I use Ubuntu 24.04 in this example and all snippets below will be based on Ubunt
 
 * Linux OS. (In my case Ubuntu 24.04)
 * Rsyslog
+    * Rsyslog config is available https://github.com/Foxmaster-stuff/Grafana_alloy_loki/blob/main/rsyslog.conf
 
 ### Installing
 
@@ -31,10 +32,12 @@ I use Ubuntu 24.04 in this example and all snippets below will be based on Ubunt
     * Apt install alloy
     * sudo systemctl start alloy
     * sudo systemctl enable alloy
+    * Alloy config for NetShield is available https://github.com/Foxmaster-stuff/Grafana_alloy_loki/blob/main/config.alloy
 * Install Loki
     * Apt install loki
     * sudo systemctl start loki
     * sudo systemctl enable loki
+    * Loki config is available https://github.com/Foxmaster-stuff/Grafana_alloy_loki/blob/main/config.ymlhttps://github.com/Foxmaster-stuff/Grafana_alloy_loki/blob/main/config.yml
 
 * Any modifications needed to be made to files/folders
 
