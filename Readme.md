@@ -4,7 +4,7 @@ Grafana as a syslog server
 
 ## Description
 
-With the use of Grafana to show the data/graphs this will show howto use alloy and loki.
+With the use of Grafana to show data/graphs.
 
 ## Getting Started
 I use Ubuntu 24.04 in this example and all snippets below will be based on Ubuntu.
