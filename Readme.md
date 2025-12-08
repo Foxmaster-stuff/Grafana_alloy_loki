@@ -53,8 +53,10 @@ code blocks for commands
 
 * Additional cleanup, logfiles grows fast and a daily cleanup is recommended,g for this we will use logrotate and some small script.
     * Download the following script and place it in /usr/local/bin/del_0b_files.sh (this will clean up 0 byte files and delete files older than 2 days)
+    * https://github.com/Foxmaster-stuff/Grafana_alloy_loki/blob/main/del_0b_files.sh
 * Create a logrotate config to compress the logfiles
     * Place this file in /etc/logrotate.d/remote_FW
+    * https://github.com/Foxmaster-stuff/Grafana_alloy_loki/blob/main/remote_FW
 ```
 command to run if program contains helper info
 ```
